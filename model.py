@@ -3,9 +3,12 @@ from typing import Dict, List
 from xgboost import XGBRegressor
 import xgboost as xgb
 import numpy as np
+import shap
 
 model = XGBRegressor()
 model.load_model('xgb_model.json')
+
+explainer = shap.Explainer(model)
 
 app = FastAPI()
 
@@ -25,10 +28,29 @@ def predict(provided: Dict[str, float]):
 
     prediction = float(model.predict(x)[0])
 
-    contribs = model.get_booster().predict(xgb.DMatrix(x, feature_names=features), pred_contribs=True)[0][:-1]
-    top_contributors = [name for name, _ in sorted(zip(features, contribs), key=lambda t: abs(t[1]), reverse=True)[:3]]
+
+    shap_exp = explainer(x)
+    shap_vals = shap_exp.values
+
+    if isinstance(shap_vals, np.ndarray) and shap_vals.ndim == 2 and shap_vals.shape[0] == 1:
+        contribs = shap_vals[0]
+    else:
+        contribs = np.ravel(shap_vals)
+
+    contributions = {name: round(float(val), 3) for name, val in zip(features, contribs)}
+
+    top_idx = np.argsort(np.abs(contribs))[::-1][:3]
+    top_contributors = []
+    for i in top_idx:
+        val = float(contribs[i])
+        top_contributors.append({
+            "feature": features[i],
+            "contribution": round(val, 3),
+        })
+
 
     return {
         "productivity_score": round(prediction, 1),
-        "top_contributors": top_contributors
+        "top_contributors": top_contributors,
+        "all_contributions": contributions
     }
